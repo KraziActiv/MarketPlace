@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerState.h"
+#include "GameFramework/Controller.h"
 #include "Net/UnrealNetwork.h"
 
 ASecurityMonitor::ASecurityMonitor()
@@ -90,8 +91,18 @@ void ASecurityMonitor::RefreshTeamCameras()
 
 void ASecurityMonitor::Server_CycleCameraFeed_Implementation(bool bNext)
 {
+	// A monitor spawned by a pawn is owned by that pawn. Resolve its controller
+	// through the owning pawn instead of casting GetNetOwningPlayer() to a controller.
 	APawn* Viewer = nullptr;
-	if (APlayerController* Controller = GetNetOwningPlayer()) Viewer = Controller->GetPawn();
+	if (APawn* OwningPawn = Cast<APawn>(GetOwner()))
+	{
+		Viewer = OwningPawn;
+	}
+	else if (AController* OwningController = Cast<AController>(GetOwner()))
+	{
+		Viewer = OwningController->GetPawn();
+	}
+
 	if (!CanPlayerView(Viewer)) return;
 	CycleCameraFeed(bNext);
 }

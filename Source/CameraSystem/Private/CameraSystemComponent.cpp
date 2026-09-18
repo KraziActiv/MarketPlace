@@ -212,7 +212,8 @@ bool UCameraSystemComponent::CanSpawnMonitorForTeam() const
 	int32 Count = 0;
 	for (AActor* Actor : FoundMonitors)
 	{
-		if (ASecurityMonitor* Monitor = Cast<ASecurityMonitor*>(Actor); Monitor && Monitor->TeamID == TeamID) ++Count;
+		// Cast must receive the class type, not a pointer-to-pointer type.
+		if (ASecurityMonitor* Monitor = Cast<ASecurityMonitor>(Actor); Monitor && Monitor->TeamID == TeamID) ++Count;
 	}
 	return Count < MaxMonitorsPerTeam;
 }
