@@ -3,6 +3,8 @@
 #include "SecurityMonitor.h"
 #include "Net/UnrealNetwork.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 
 UCameraSystemComponent::UCameraSystemComponent()
 {
@@ -14,23 +16,17 @@ void UCameraSystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Server handles team assignment and replicates it to clients
-	if (GetOwner() && GetOwner()->HasAuthority())
+	if (GetOwner() && GetOwner()->HasAuthority() && TeamID == 0)
 	{
-		// If TeamID is unassigned (0), generate an ID based on network identity or unique object ID
-		if (TeamID == 0)
+		// Preserve the existing private-player behavior until the host game assigns a team.
+		APawn* OwnerPawn = Cast<APawn>(GetOwner());
+		if (OwnerPawn && OwnerPawn->GetController())
 		{
-			APawn* OwnerPawn = Cast<APawn>(GetOwner());
-			if (OwnerPawn && OwnerPawn->GetController())
-			{
-				// Shift by +1 so team IDs are always positive, distinct numbers
-				TeamID = OwnerPawn->GetController()->GetUniqueID() + 1;
-			}
-			else
-			{
-				// Fallback to Actor's unique runtime ID if no Controller exists yet
-				TeamID = GetOwner()->GetUniqueID() + 1;
-			}
+			TeamID = OwnerPawn->GetController()->GetUniqueID() + 1;
+		}
+		else
+		{
+			TeamID = GetOwner()->GetUniqueID() + 1;
 		}
 	}
 }
@@ -48,9 +44,49 @@ int32 UCameraSystemComponent::GetPlayerTeamID_Implementation() const
 
 void UCameraSystemComponent::SetTeamID(int32 NewTeamID)
 {
-	if (GetOwner() && GetOwner()->HasAuthority())
+	if (!GetOwner() || !GetOwner()->HasAuthority() || TeamID == NewTeamID)
 	{
-		TeamID = NewTeamID;
+		return;
+	}
+
+	TeamID = NewTeamID;
+	RefreshOwnedSecurityActorsTeam();
+}
+
+void UCameraSystemComponent::RefreshOwnedSecurityActorsTeam()
+{
+	if (!GetWorld()) return;
+
+	APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	APlayerState* OwnerPlayerState = OwnerPawn ? OwnerPawn->GetPlayerState() : nullptr;
+	if (!OwnerPlayerState) return;
+
+	TArray<AActor*> FoundCameras;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASecurityCamera::StaticClass(), FoundCameras);
+	for (AActor* Actor : FoundCameras)
+	{
+		if (ASecurityCamera* Camera = Cast<ASecurityCamera>(Actor))
+		{
+			if (Camera->PlacedByPlayer == OwnerPlayerState)
+			{
+				Camera->TeamID = TeamID;
+				Camera->OnRep_TeamID();
+			}
+		}
+	}
+
+	TArray<AActor*> FoundMonitors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASecurityMonitor::StaticClass(), FoundMonitors);
+	for (AActor* Actor : FoundMonitors)
+	{
+		if (ASecurityMonitor* Monitor = Cast<ASecurityMonitor>(Actor))
+		{
+			if (Monitor->PlacedByPlayer == OwnerPlayerState)
+			{
+				Monitor->TeamID = TeamID;
+				Monitor->RefreshTeamCameras();
+			}
+		}
 	}
 }
 
@@ -62,21 +98,14 @@ void UCameraSystemComponent::TryPlaceCamera()
 	FVector Start;
 	FRotator Rotation;
 	Owner->GetActorEyesViewPoint(Start, Rotation);
-
-	FVector End = Start + (Rotation.Vector() * PlacementTraceDistance);
-
 	FHitResult HitResult;
 	FCollisionQueryParams TraceParams;
 	TraceParams.AddIgnoredActor(Owner);
 
-	bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, TraceParams);
-
-	if (bHit && HitResult.bBlockingHit)
+	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, Start + Rotation.Vector() * PlacementTraceDistance, ECC_Visibility, TraceParams) && HitResult.bBlockingHit)
 	{
-		FRotator SpawnRotation = FRotationMatrix::MakeFromX(HitResult.ImpactNormal).Rotator();
-		FTransform SpawnTransform(SpawnRotation, HitResult.ImpactPoint);
-
-		Server_SpawnCamera(SpawnTransform);
+		const FRotator SpawnRotation = FRotationMatrix::MakeFromX(HitResult.ImpactNormal).Rotator();
+		Server_SpawnCamera(FTransform(SpawnRotation, HitResult.ImpactPoint));
 	}
 }
 
@@ -88,83 +117,76 @@ void UCameraSystemComponent::TryPlaceMonitor()
 	FVector Start;
 	FRotator Rotation;
 	Owner->GetActorEyesViewPoint(Start, Rotation);
-
-	FVector End = Start + (Rotation.Vector() * PlacementTraceDistance);
-
 	FHitResult HitResult;
 	FCollisionQueryParams TraceParams;
 	TraceParams.AddIgnoredActor(Owner);
 
-	bool bHit = GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_Visibility, TraceParams);
-
-	if (bHit && HitResult.bBlockingHit)
+	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, Start + Rotation.Vector() * PlacementTraceDistance, ECC_Visibility, TraceParams) && HitResult.bBlockingHit)
 	{
+		const bool bIsHorizontalSurface = FMath::IsNearlyEqual(FMath::Abs(HitResult.ImpactNormal.Z), 1.0f, 0.1f);
 		FRotator SpawnRotation;
-
-		bool bIsHorizontalSurface = FMath::IsNearlyEqual(FMath::Abs(HitResult.ImpactNormal.Z), 1.0f, 0.1f);
-
 		if (bIsHorizontalSurface)
 		{
-			FVector PlayerFacing = (Start - HitResult.ImpactPoint).GetSafeNormal2D();
-			SpawnRotation = PlayerFacing.Rotation();
+			SpawnRotation = (Start - HitResult.ImpactPoint).GetSafeNormal2D().Rotation();
 		}
 		else
 		{
 			SpawnRotation = FRotationMatrix::MakeFromX(HitResult.ImpactNormal).Rotator();
 		}
-
-		FTransform SpawnTransform(SpawnRotation, HitResult.ImpactPoint);
-
-		Server_SpawnMonitor(SpawnTransform, bIsHorizontalSurface);
+		Server_SpawnMonitor(FTransform(SpawnRotation, HitResult.ImpactPoint), bIsHorizontalSurface);
 	}
+}
+
+void UCameraSystemComponent::TryCycleMonitor(ASecurityMonitor* Monitor, bool bNext)
+{
+	if (!Monitor || !GetOwner()) return;
+	if (GetOwner()->HasAuthority())
+	{
+		Server_RequestCycleMonitor_Implementation(Monitor, bNext);
+	}
+	else
+	{
+		Server_RequestCycleMonitor(Monitor, bNext);
+	}
+}
+
+void UCameraSystemComponent::Server_RequestCycleMonitor_Implementation(ASecurityMonitor* Monitor, bool bNext)
+{
+	APawn* Viewer = Cast<APawn>(GetOwner());
+	if (!Viewer || !Monitor || !Monitor->CanPlayerView(Viewer)) return;
+	if (FVector::DistSquared(Viewer->GetActorLocation(), Monitor->GetActorLocation()) > FMath::Square(MonitorInteractionDistance)) return;
+
+	Monitor->CycleCameraFeed(bNext);
 }
 
 void UCameraSystemComponent::Server_SpawnCamera_Implementation(const FTransform& SpawnTransform)
 {
 	if (!CameraClassToSpawn || !GetWorld() || !CanSpawnCameraForTeam()) return;
-
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnParams.Owner = GetOwner();
 	SpawnParams.Instigator = Cast<APawn>(GetOwner());
 
-	ASecurityCamera* NewCamera = GetWorld()->SpawnActor<ASecurityCamera>(CameraClassToSpawn, SpawnTransform, SpawnParams);
-	if (NewCamera)
+	if (ASecurityCamera* NewCamera = GetWorld()->SpawnActor<ASecurityCamera>(CameraClassToSpawn, SpawnTransform, SpawnParams))
 	{
 		NewCamera->TeamID = TeamID;
+		NewCamera->PlacedByPlayer = Cast<APawn>(GetOwner()) ? Cast<APawn>(GetOwner())->GetPlayerState() : nullptr;
 	}
 }
 
 void UCameraSystemComponent::Server_SpawnMonitor_Implementation(const FTransform& SpawnTransform, bool bIsHorizontal)
 {
 	if (!MonitorClass || !GetWorld() || !CanSpawnMonitorForTeam()) return;
-
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnParams.Owner = GetOwner();
 	SpawnParams.Instigator = Cast<APawn>(GetOwner());
 
-	ASecurityMonitor* NewMonitor = GetWorld()->SpawnActor<ASecurityMonitor>(MonitorClass, SpawnTransform, SpawnParams);
-	if (NewMonitor)
+	if (ASecurityMonitor* NewMonitor = GetWorld()->SpawnActor<ASecurityMonitor>(MonitorClass, SpawnTransform, SpawnParams))
 	{
 		NewMonitor->TeamID = TeamID;
+		NewMonitor->PlacedByPlayer = Cast<APawn>(GetOwner()) ? Cast<APawn>(GetOwner())->GetPlayerState() : nullptr;
 		NewMonitor->SetSurfaceType(bIsHorizontal);
-
-		// Count existing team monitors to offset starting camera index
-		TArray<AActor*> FoundMonitors;
-		UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASecurityMonitor::StaticClass(), FoundMonitors);
-
-		int32 MonitorCount = 0;
-		for (AActor* Actor : FoundMonitors)
-		{
-			if (ASecurityMonitor* Mon = Cast<ASecurityMonitor>(Actor))
-			{
-				if (Mon->TeamID == TeamID) MonitorCount++;
-			}
-		}
-
-		// Stagger camera feed starting index across monitors (Monitor 1 = Cam 0, Monitor 2 = Cam 1, etc.)
-		NewMonitor->CurrentCameraIndex = FMath::Max(0, MonitorCount - 1);
 		NewMonitor->RefreshTeamCameras();
 	}
 }
@@ -172,43 +194,25 @@ void UCameraSystemComponent::Server_SpawnMonitor_Implementation(const FTransform
 bool UCameraSystemComponent::CanSpawnCameraForTeam() const
 {
 	if (!GetWorld()) return false;
-
 	TArray<AActor*> FoundCameras;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASecurityCamera::StaticClass(), FoundCameras);
-
-	int32 CurrentTeamCameraCount = 0;
+	int32 Count = 0;
 	for (AActor* Actor : FoundCameras)
 	{
-		if (ASecurityCamera* Cam = Cast<ASecurityCamera>(Actor))
-		{
-			if (Cam->TeamID == TeamID)
-			{
-				CurrentTeamCameraCount++;
-			}
-		}
+		if (ASecurityCamera* Camera = Cast<ASecurityCamera>(Actor); Camera && Camera->TeamID == TeamID) ++Count;
 	}
-
-	return CurrentTeamCameraCount < MaxCamerasPerTeam;
+	return Count < MaxCamerasPerTeam;
 }
 
 bool UCameraSystemComponent::CanSpawnMonitorForTeam() const
 {
 	if (!GetWorld()) return false;
-
 	TArray<AActor*> FoundMonitors;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASecurityMonitor::StaticClass(), FoundMonitors);
-
-	int32 CurrentTeamMonitorCount = 0;
+	int32 Count = 0;
 	for (AActor* Actor : FoundMonitors)
 	{
-		if (ASecurityMonitor* Mon = Cast<ASecurityMonitor>(Actor))
-		{
-			if (Mon->TeamID == TeamID)
-			{
-				CurrentTeamMonitorCount++;
-			}
-		}
+		if (ASecurityMonitor* Monitor = Cast<ASecurityMonitor*>(Actor); Monitor && Monitor->TeamID == TeamID) ++Count;
 	}
-
-	return CurrentTeamMonitorCount < MaxMonitorsPerTeam;
+	return Count < MaxMonitorsPerTeam;
 }

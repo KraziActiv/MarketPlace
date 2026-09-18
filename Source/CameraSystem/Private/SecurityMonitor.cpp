@@ -5,16 +5,16 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
 #include "Net/UnrealNetwork.h"
 
 ASecurityMonitor::ASecurityMonitor()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	bReplicates = true;
-
 	RootSceneComponent = CreateDefaultSubobject<USceneComponent>(TEXT("RootSceneComponent"));
 	SetRootComponent(RootSceneComponent);
-
 	MonitorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("MonitorMesh"));
 	MonitorMesh->SetupAttachment(RootSceneComponent);
 }
@@ -22,7 +22,6 @@ ASecurityMonitor::ASecurityMonitor()
 void ASecurityMonitor::BeginPlay()
 {
 	Super::BeginPlay();
-
 	OnRep_IsHorizontalSurface();
 	RefreshTeamCameras();
 }
@@ -30,8 +29,8 @@ void ASecurityMonitor::BeginPlay()
 void ASecurityMonitor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-
 	DOREPLIFETIME(ASecurityMonitor, TeamID);
+	DOREPLIFETIME(ASecurityMonitor, PlacedByPlayer);
 	DOREPLIFETIME(ASecurityMonitor, CurrentCameraIndex);
 	DOREPLIFETIME(ASecurityMonitor, bIsHorizontalSurface);
 }
@@ -50,49 +49,61 @@ void ASecurityMonitor::SetSurfaceType(bool bHorizontal)
 void ASecurityMonitor::OnRep_IsHorizontalSurface()
 {
 	UStaticMesh* MeshToUse = bIsHorizontalSurface ? DesktopStaticMesh : WallStaticMesh;
-	if (MeshToUse && MonitorMesh)
-	{
-		MonitorMesh->SetStaticMesh(MeshToUse);
-	}
+	if (MeshToUse && MonitorMesh) MonitorMesh->SetStaticMesh(MeshToUse);
+}
+
+bool ASecurityMonitor::CanPlayerView(APawn* Viewer) const
+{
+	if (!Viewer) return false;
+	APlayerState* ViewerPlayerState = Viewer->GetPlayerState();
+	if (PlacedByPlayer && ViewerPlayerState == PlacedByPlayer) return true;
+
+	UCameraSystemComponent* ViewerComponent = Viewer->FindComponentByClass<UCameraSystemComponent>();
+	return TeamID != 0 && ViewerComponent && ViewerComponent->TeamID == TeamID;
 }
 
 void ASecurityMonitor::RefreshTeamCameras()
 {
 	TeamCameras.Empty();
-
 	if (!GetWorld()) return;
 
 	TArray<AActor*> FoundActors;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ASecurityCamera::StaticClass(), FoundActors);
-
-	// Only collect cameras that match THIS monitor's TeamID
 	for (AActor* Actor : FoundActors)
 	{
-		ASecurityCamera* Cam = Cast<ASecurityCamera>(Actor);
-		if (Cam && Cam->TeamID == TeamID)
+		if (ASecurityCamera* Camera = Cast<ASecurityCamera>(Actor))
 		{
-			TeamCameras.Add(Cam);
+			if (Camera->TeamID == TeamID) TeamCameras.Add(Camera);
 		}
 	}
 
+	if (TeamCameras.Num() > 0)
+	{
+		CurrentCameraIndex = FMath::Clamp(CurrentCameraIndex, 0, TeamCameras.Num() - 1);
+	}
+	else
+	{
+		CurrentCameraIndex = 0;
+	}
 	UpdateActiveFeed();
 }
 
 void ASecurityMonitor::Server_CycleCameraFeed_Implementation(bool bNext)
 {
-	RefreshTeamCameras();
+	APawn* Viewer = nullptr;
+	if (APlayerController* Controller = GetNetOwningPlayer()) Viewer = Controller->GetPawn();
+	if (!CanPlayerView(Viewer)) return;
+	CycleCameraFeed(bNext);
+}
 
+void ASecurityMonitor::CycleCameraFeed(bool bNext)
+{
+	RefreshTeamCameras();
 	if (TeamCameras.Num() == 0) return;
 
-	if (bNext)
-	{
-		CurrentCameraIndex = (CurrentCameraIndex + 1) % TeamCameras.Num();
-	}
-	else
-	{
-		CurrentCameraIndex = (CurrentCameraIndex - 1 + TeamCameras.Num()) % TeamCameras.Num();
-	}
-
+	CurrentCameraIndex = bNext
+		? (CurrentCameraIndex + 1) % TeamCameras.Num()
+		: (CurrentCameraIndex - 1 + TeamCameras.Num()) % TeamCameras.Num();
 	UpdateActiveFeed();
 }
 
@@ -103,20 +114,11 @@ void ASecurityMonitor::OnRep_CurrentCameraIndex()
 
 void ASecurityMonitor::UpdateActiveFeed()
 {
-	if (!MonitorMesh) return;
-
-	// Fetch local player's camera component to verify authorization
+	if (!MonitorMesh || !GetWorld()) return;
 	APawn* LocalPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
-	UCameraSystemComponent* LocalCamComp = LocalPawn ? LocalPawn->FindComponentByClass<UCameraSystemComponent>() : nullptr;
-
-	bool bIsTeammate = (LocalCamComp && LocalCamComp->TeamID == TeamID);
-
-	// If player is NOT on the monitor's team, or no cameras exist for this team
-	if (!bIsTeammate || !TeamCameras.IsValidIndex(CurrentCameraIndex))
+	if (!CanPlayerView(LocalPawn) || !TeamCameras.IsValidIndex(CurrentCameraIndex))
 	{
-		// Blank out screen material parameter so enemy players see static/black
-		UMaterialInstanceDynamic* DynMat = MonitorMesh->CreateAndSetMaterialInstanceDynamic(0);
-		if (DynMat)
+		if (UMaterialInstanceDynamic* DynMat = MonitorMesh->CreateAndSetMaterialInstanceDynamic(0))
 		{
 			DynMat->SetTextureParameterValue(FName("CameraFeed"), nullptr);
 		}
@@ -124,19 +126,13 @@ void ASecurityMonitor::UpdateActiveFeed()
 	}
 
 	ASecurityCamera* ActiveCamera = TeamCameras[CurrentCameraIndex];
-	if (ActiveCamera && ActiveCamera->TeamID == TeamID)
+	if (!ActiveCamera || ActiveCamera->TeamID != TeamID) return;
+	ActiveCamera->SetCaptureActive(true);
+	if (UTextureRenderTarget2D* RT = ActiveCamera->GetOrCreateLocalRenderTarget())
 	{
-		// Enable capture locally for teammate viewer
-		ActiveCamera->SetCaptureActive(true);
-		UTextureRenderTarget2D* RT = ActiveCamera->GetOrCreateLocalRenderTarget();
-
-		if (RT)
+		if (UMaterialInstanceDynamic* DynMat = MonitorMesh->CreateAndSetMaterialInstanceDynamic(0))
 		{
-			UMaterialInstanceDynamic* DynMat = MonitorMesh->CreateAndSetMaterialInstanceDynamic(0);
-			if (DynMat)
-			{
-				DynMat->SetTextureParameterValue(FName("CameraFeed"), Cast<UTexture>(RT));
-			}
+			DynMat->SetTextureParameterValue(FName("CameraFeed"), Cast<UTexture>(RT));
 		}
 	}
 }

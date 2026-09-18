@@ -16,57 +16,61 @@ class CAMERASYSTEM_API UCameraSystemComponent : public UActorComponent, public I
 public:
 	UCameraSystemComponent();
 
-	// Team / Guild / Clan ID assigned to this player component
+	// Team / Guild / Clan ID assigned to this player component.
+	// A value of 0 means the player is not currently assigned to a shared team.
 	UPROPERTY(Replicated, EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	int32 TeamID = 0;
 
-	// ICameraSystemInterface Implementation
 	virtual int32 GetPlayerTeamID_Implementation() const override;
 
-	// Helper function to set team at runtime
+	// Changes this player's team and updates cameras/monitors placed by this player.
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	void SetTeamID(int32 NewTeamID);
 
-	// Class of camera actor to spawn
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	TSubclassOf<ASecurityCamera> CameraClassToSpawn;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	TSubclassOf<ASecurityMonitor> MonitorClass;
 
-	// Max distance for placement line trace
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	float PlacementTraceDistance = 1000.0f;
 
-	// Main trigger function to place a camera
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
+	float MonitorInteractionDistance = 300.0f;
+
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	void TryPlaceCamera();
 
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	void TryPlaceMonitor();
 
-	// Server RPC to execute replicated spawn
+	// Sends a validated monitor interaction through the player-owned component.
+	UFUNCTION(BlueprintCallable, Category = "Camera System")
+	void TryCycleMonitor(ASecurityMonitor* Monitor, bool bNext = true);
+
 	UFUNCTION(Server, Reliable, Category = "Camera System")
 	void Server_SpawnCamera(const FTransform& SpawnTransform);
 
-	// Server RPC to execute replicated monitor spawn
 	UFUNCTION(Server, Reliable, Category = "Camera System")
 	void Server_SpawnMonitor(const FTransform& SpawnTransform, bool bIsHorizontal);
 
-	// Maximum cameras allowed per team
+	UFUNCTION(Server, Reliable, Category = "Camera System")
+	void Server_RequestCycleMonitor(ASecurityMonitor* Monitor, bool bNext);
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	int32 MaxCamerasPerTeam = 4;
 
-	// Maximum monitors allowed per team
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	int32 MaxMonitorsPerTeam = 2;
 
-	// Helper checks
 	bool CanSpawnCameraForTeam() const;
 	bool CanSpawnMonitorForTeam() const;
 
 protected:
-
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	// Called on the server after a team change so solo-owned actors join the new team.
+	void RefreshOwnedSecurityActorsTeam();
 };
