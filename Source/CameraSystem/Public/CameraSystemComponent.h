@@ -16,14 +16,13 @@ class CAMERASYSTEM_API UCameraSystemComponent : public UActorComponent, public I
 public:
 	UCameraSystemComponent();
 
-	// Team / Guild / Clan ID assigned to this player component.
-	// A value of 0 means the player is not currently assigned to a shared team.
-	UPROPERTY(Replicated, EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
+	// Team ID supplied by the host game's team system. Zero means no team assigned.
+	UPROPERTY(Replicated, EditAnywhere, BlueprintReadOnly, Category = "Camera System|Config")
 	int32 TeamID = 0;
 
 	virtual int32 GetPlayerTeamID_Implementation() const override;
 
-	// Changes this player's team and updates cameras/monitors placed by this player.
+	// Must be called by the authoritative game/team system when this player's team changes.
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	void SetTeamID(int32 NewTeamID);
 
@@ -45,7 +44,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	void TryPlaceMonitor();
 
-	// Sends a validated monitor interaction through the player-owned component.
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	void TryCycleMonitor(ASecurityMonitor* Monitor, bool bNext = true);
 
@@ -70,7 +68,5 @@ public:
 protected:
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-
-	// Called on the server after a team change so solo-owned actors join the new team.
 	void RefreshOwnedSecurityActorsTeam();
 };

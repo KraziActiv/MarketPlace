@@ -16,19 +16,8 @@ void UCameraSystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (GetOwner() && GetOwner()->HasAuthority() && TeamID == 0)
-	{
-		// Preserve the existing private-player behavior until the host game assigns a team.
-		APawn* OwnerPawn = Cast<APawn>(GetOwner());
-		if (OwnerPawn && OwnerPawn->GetController())
-		{
-			TeamID = OwnerPawn->GetController()->GetUniqueID() + 1;
-		}
-		else
-		{
-			TeamID = GetOwner()->GetUniqueID() + 1;
-		}
-	}
+	// TeamID intentionally remains at its configured value. The host game's team
+	// system is responsible for assigning it on the server through SetTeamID().
 }
 
 void UCameraSystemComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -71,6 +60,7 @@ void UCameraSystemComponent::RefreshOwnedSecurityActorsTeam()
 			{
 				Camera->TeamID = TeamID;
 				Camera->OnRep_TeamID();
+				Camera->ForceNetUpdate();
 			}
 		}
 	}
@@ -85,6 +75,7 @@ void UCameraSystemComponent::RefreshOwnedSecurityActorsTeam()
 			{
 				Monitor->TeamID = TeamID;
 				Monitor->RefreshTeamCameras();
+				Monitor->ForceNetUpdate();
 			}
 		}
 	}
@@ -124,15 +115,9 @@ void UCameraSystemComponent::TryPlaceMonitor()
 	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, Start + Rotation.Vector() * PlacementTraceDistance, ECC_Visibility, TraceParams) && HitResult.bBlockingHit)
 	{
 		const bool bIsHorizontalSurface = FMath::IsNearlyEqual(FMath::Abs(HitResult.ImpactNormal.Z), 1.0f, 0.1f);
-		FRotator SpawnRotation;
-		if (bIsHorizontalSurface)
-		{
-			SpawnRotation = (Start - HitResult.ImpactPoint).GetSafeNormal2D().Rotation();
-		}
-		else
-		{
-			SpawnRotation = FRotationMatrix::MakeFromX(HitResult.ImpactNormal).Rotator();
-		}
+		const FRotator SpawnRotation = bIsHorizontalSurface
+			? (Start - HitResult.ImpactPoint).GetSafeNormal2D().Rotation()
+			: FRotationMatrix::MakeFromX(HitResult.ImpactNormal).Rotator();
 		Server_SpawnMonitor(FTransform(SpawnRotation, HitResult.ImpactPoint), bIsHorizontalSurface);
 	}
 }
@@ -155,7 +140,6 @@ void UCameraSystemComponent::Server_RequestCycleMonitor_Implementation(ASecurity
 	APawn* Viewer = Cast<APawn>(GetOwner());
 	if (!Viewer || !Monitor || !Monitor->CanPlayerView(Viewer)) return;
 	if (FVector::DistSquared(Viewer->GetActorLocation(), Monitor->GetActorLocation()) > FMath::Square(MonitorInteractionDistance)) return;
-
 	Monitor->CycleCameraFeed(bNext);
 }
 
@@ -171,6 +155,7 @@ void UCameraSystemComponent::Server_SpawnCamera_Implementation(const FTransform&
 	{
 		NewCamera->TeamID = TeamID;
 		NewCamera->PlacedByPlayer = Cast<APawn>(GetOwner()) ? Cast<APawn>(GetOwner())->GetPlayerState() : nullptr;
+		NewCamera->ForceNetUpdate();
 	}
 }
 
@@ -188,6 +173,7 @@ void UCameraSystemComponent::Server_SpawnMonitor_Implementation(const FTransform
 		NewMonitor->PlacedByPlayer = Cast<APawn>(GetOwner()) ? Cast<APawn>(GetOwner())->GetPlayerState() : nullptr;
 		NewMonitor->SetSurfaceType(bIsHorizontal);
 		NewMonitor->RefreshTeamCameras();
+		NewMonitor->ForceNetUpdate();
 	}
 }
 
@@ -212,7 +198,6 @@ bool UCameraSystemComponent::CanSpawnMonitorForTeam() const
 	int32 Count = 0;
 	for (AActor* Actor : FoundMonitors)
 	{
-		// Cast must receive the class type, not a pointer-to-pointer type.
 		if (ASecurityMonitor* Monitor = Cast<ASecurityMonitor>(Actor); Monitor && Monitor->TeamID == TeamID) ++Count;
 	}
 	return Count < MaxMonitorsPerTeam;
