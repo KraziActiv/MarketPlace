@@ -27,7 +27,7 @@ public:
 	void SetTeamID(int32 NewTeamID);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
-	TSubclassOf<ASecurityCamera> CameraClassToSpawn;
+	TSubclassOf<ASecurityCamera> CameraClass;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera System|Config")
 	TSubclassOf<ASecurityMonitor> MonitorClass;

@@ -71,12 +71,25 @@ UTextureRenderTarget2D* ASecurityCamera::GetOrCreateLocalRenderTarget()
 	if (!LocalRenderTarget)
 	{
 		LocalRenderTarget = NewObject<UTextureRenderTarget2D>(this);
-		LocalRenderTarget->InitCustomFormat(RenderTargetResolution, RenderTargetResolution, PF_B8G8R8A8, false);
+		LocalRenderTarget->InitCustomFormat(
+			1024,
+			552,
+			PF_B8G8R8A8,
+			false
+		);
 		LocalRenderTarget->ClearColor = FLinearColor::Black;
 		LocalRenderTarget->UpdateResourceImmediate(true);
 
 		SceneCapture->TextureTarget = LocalRenderTarget;
 	}
+	UE_LOG(
+		LogTemp,
+		Warning,
+		TEXT("Camera render target size: %dx%d"),
+		LocalRenderTarget->SizeX,
+		LocalRenderTarget->SizeY
+	);
+
 	return LocalRenderTarget;
 }
 

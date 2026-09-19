@@ -148,21 +148,29 @@ void ASecurityMonitor::UpdateActiveFeed()
 	APawn* LocalPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0);
 	if (!CanPlayerView(LocalPawn) || !TeamCameras.IsValidIndex(CurrentCameraIndex))
 	{
-		if (UMaterialInstanceDynamic* DynMat = MonitorMesh->CreateAndSetMaterialInstanceDynamic(0))
+		if (UMaterialInstanceDynamic* DynMat =
+			MonitorMesh->CreateAndSetMaterialInstanceDynamic(1))
 		{
-			DynMat->SetTextureParameterValue(FName("CameraFeed"), nullptr);
+			DynMat->SetTextureParameterValue(
+				FName("CameraFeed"),
+				nullptr
+			);
 		}
-		return;
 	}
 
 	ASecurityCamera* ActiveCamera = TeamCameras[CurrentCameraIndex];
 	if (!ActiveCamera || ActiveCamera->TeamID != TeamID) return;
 	ActiveCamera->SetCaptureActive(true);
-	if (UTextureRenderTarget2D* RT = ActiveCamera->GetOrCreateLocalRenderTarget())
+	if (UTextureRenderTarget2D* RT =
+		ActiveCamera->GetOrCreateLocalRenderTarget())
 	{
-		if (UMaterialInstanceDynamic* DynMat = MonitorMesh->CreateAndSetMaterialInstanceDynamic(0))
+		if (UMaterialInstanceDynamic* DynMat =
+			MonitorMesh->CreateAndSetMaterialInstanceDynamic(1))
 		{
-			DynMat->SetTextureParameterValue(FName("CameraFeed"), Cast<UTexture>(RT));
+			DynMat->SetTextureParameterValue(
+				FName("CameraFeed"),
+				RT
+			);
 		}
 	}
 }

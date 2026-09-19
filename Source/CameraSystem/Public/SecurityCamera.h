@@ -44,6 +44,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Camera System|Config")
 	int32 RenderTargetResolution = 512;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Camera System|Config")
+	int32 RenderTargetWidth = 1024;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Camera System|Config")
+	int32 RenderTargetHeight = 552;
+
 	UFUNCTION(BlueprintCallable, Category = "Camera System")
 	UTextureRenderTarget2D* GetOrCreateLocalRenderTarget();
 

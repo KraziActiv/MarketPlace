@@ -145,13 +145,13 @@ void UCameraSystemComponent::Server_RequestCycleMonitor_Implementation(ASecurity
 
 void UCameraSystemComponent::Server_SpawnCamera_Implementation(const FTransform& SpawnTransform)
 {
-	if (!CameraClassToSpawn || !GetWorld() || !CanSpawnCameraForTeam()) return;
+	if (!CameraClass || !GetWorld() || !CanSpawnCameraForTeam()) return;
 	FActorSpawnParameters SpawnParams;
 	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnParams.Owner = GetOwner();
 	SpawnParams.Instigator = Cast<APawn>(GetOwner());
 
-	if (ASecurityCamera* NewCamera = GetWorld()->SpawnActor<ASecurityCamera>(CameraClassToSpawn, SpawnTransform, SpawnParams))
+	if (ASecurityCamera* NewCamera = GetWorld()->SpawnActor<ASecurityCamera>(CameraClass, SpawnTransform, SpawnParams))
 	{
 		NewCamera->TeamID = TeamID;
 		NewCamera->PlacedByPlayer = Cast<APawn>(GetOwner()) ? Cast<APawn>(GetOwner())->GetPlayerState() : nullptr;
