@@ -29,12 +29,11 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	USceneCaptureComponent2D* SceneCapture;
 
-	UPROPERTY(ReplicatedUsing = OnRep_TeamID, EditInstanceOnly, BlueprintReadWrite, Category = "Camera Setup")
-	int32 TeamID = 0;
-
-	// Original placer, retained when the player later joins or leaves a team.
-	UPROPERTY(ReplicatedUsing = OnRep_TeamID, BlueprintReadOnly, Category = "Camera Setup")
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Camera Ownership")
 	TObjectPtr<APlayerState> PlacedByPlayer;
+
+	UPROPERTY(ReplicatedUsing = OnRep_TeamID, BlueprintReadOnly, Category = "Camera Ownership")
+	int32 TeamID = 0;
 
 	UFUNCTION()
 	void OnRep_TeamID();

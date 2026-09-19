@@ -55,12 +55,31 @@ void ASecurityMonitor::OnRep_IsHorizontalSurface()
 
 bool ASecurityMonitor::CanPlayerView(APawn* Viewer) const
 {
-	if (!Viewer) return false;
-	APlayerState* ViewerPlayerState = Viewer->GetPlayerState();
-	if (PlacedByPlayer && ViewerPlayerState == PlacedByPlayer) return true;
+	if (!Viewer)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("CameraSystem: Viewer is null"));
+		return false;
+	}
 
-	UCameraSystemComponent* ViewerComponent = Viewer->FindComponentByClass<UCameraSystemComponent>();
-	return TeamID != 0 && ViewerComponent && ViewerComponent->TeamID == TeamID;
+	APlayerState* ViewerPlayerState = Viewer->GetPlayerState();
+	UCameraSystemComponent* ViewerComponent =
+		Viewer->FindComponentByClass<UCameraSystemComponent>();
+
+	const int32 ViewerTeamID = ViewerComponent ? ViewerComponent->TeamID : -1;
+	const bool bIsPlacer = PlacedByPlayer && ViewerPlayerState == PlacedByPlayer;
+	const bool bIsTeammate = TeamID != 0 && ViewerTeamID == TeamID;
+
+	UE_LOG(
+		LogTemp,
+		Warning,
+		TEXT("CameraSystem Access Check | MonitorTeam=%d ViewerTeam=%d IsPlacer=%s IsTeammate=%s"),
+		TeamID,
+		ViewerTeamID,
+		bIsPlacer ? TEXT("true") : TEXT("false"),
+		bIsTeammate ? TEXT("true") : TEXT("false")
+	);
+
+	return bIsPlacer || bIsTeammate;
 }
 
 void ASecurityMonitor::RefreshTeamCameras()
